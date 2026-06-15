@@ -258,6 +258,8 @@ class LatentDiffusion(DDPM):
 
             if cond_key == 'gene_expressions':
                 xc = torch.cat((batch[cond_key], batch['dose'].unsqueeze(-1)), dim=-1)
+            elif cond_key == 'mic_value':
+                xc = batch['mic_value'].unsqueeze(-1)
             else:
                 xc = None
                 raise NotImplementedError('condition key is not supported')
