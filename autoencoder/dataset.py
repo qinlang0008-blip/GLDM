@@ -277,66 +277,42 @@ class MolerDataset(Dataset):
         df.to_csv(processed_file_paths_csv, index=False)
 
     def process(self):
-        """Convert raw generation traces into individual .pt files for each of the trace steps."""
-        # only call process if it was not called before
+        """Convert raw generation traces into individual .pt files for each of the trace steps.
+
+        MEMORY-SAFE VERSION (patched): processes one raw shard at a time and flushes
+        completed chunks to disk immediately, instead of accumulating every shard's
+        trace steps in memory before writing anything. This bounds peak memory usage
+        to roughly chunk_size trace steps regardless of how many raw shards exist.
+        Trade-off: loses the ThreadPoolExecutor parallelism of the original version
+        (acceptable here since the original parallelism was thread-based on CPU-bound
+        work, which is GIL-limited and gave limited real speedup anyway).
+        """
         if self.processed_file_names_size > 0:
             pass
         else:
             results = []
             self.load_metadata()
-            generation_steps = []
-            future_saved_file_paths = []
             chunk_size = 1000
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                future_gen_steps_to_pkl_file_path = [
-                    executor.submit(
-                        self._convert_data_shard_to_list_of_trace_steps, pkl_file_path
+            buffer = []
+            chunk_id = 0
+            with tqdm(total=len(self.raw_file_names)) as pbar:
+                for pkl_file_path in self.raw_file_names:
+                    current_generation_steps = self._convert_data_shard_to_list_of_trace_steps(
+                        pkl_file_path
                     )
-                    for pkl_file_path in self.raw_file_names
-                ]
-                with tqdm(total=len(self.raw_file_names)) as pbar:
-                    for future_gen_steps in concurrent.futures.as_completed(
-                        future_gen_steps_to_pkl_file_path
-                    ):
-                        current_generation_steps = future_gen_steps.result()
+                    buffer += current_generation_steps
 
-                        # put all the generatoin steps into the queue
-                        generation_steps += current_generation_steps
-                        pbar.update(1)
+                    while len(buffer) >= chunk_size:
+                        chunk = buffer[:chunk_size]
+                        buffer = buffer[chunk_size:]
+                        results.append(self._save_processed_gen_step(chunk, chunk_id))
+                        chunk_id += 1
 
-                future_saved_file_paths += [
-                    executor.submit(self._save_processed_gen_step, chunk, i)
-                    for i, chunk in enumerate(
-                        chunk_list(generation_steps, chunk_size=chunk_size)
-                    )
-                ]
+                    pbar.update(1)
 
-                with tqdm(total=len(self.raw_file_names)) as pbar:
-                    for future in concurrent.futures.as_completed(
-                        future_saved_file_paths
-                    ):
-                        results += [future.result()]
-                        pbar.update(1)
-
-                # accumulated_generation_steps = []
-                # with tqdm(total = len(self.raw_file_names)) as pbar:
-                #     for future_gen_steps in concurrent.futures.as_completed(future_gen_steps_to_pkl_file_path):
-                #         pkl_file_path = future_gen_steps_to_pkl_file_path[future_gen_steps]
-                #         current_generation_steps = future_gen_steps.result()
-
-                #         accumulated_generation_steps += current_generation_steps
-                #         accumulated_num_steps += len(current_generation_steps)
-
-                #         if accumulated_num_steps > 200:
-                #             generation_steps.append((accumulated_generation_steps, pkl_file_path))
-                #             accumulated_generation_steps = []
-                #         pbar.update(1)
-
-                # future_saved_file_paths = [executor.submit(self._save_processed_gen_step, molecule_gen_steps, pkl_file_path) for molecule_gen_steps, pkl_file_path in generation_steps]
-                # with tqdm(total = len(generation_steps)) as pbar:
-                #     for future in concurrent.futures.as_completed(future_saved_file_paths):
-                #         results += [future.result()]
-                #         pbar.update(1)
+                if len(buffer) > 0:
+                    results.append(self._save_processed_gen_step(buffer, chunk_id))
+                    chunk_id += 1
 
             self.generate_preprocessed_file_paths_csv(
                 preprocessed_file_paths_folder=os.path.join(

@@ -33,7 +33,7 @@ model:
     using_lincs: True
     using_wasserstein_loss: True
     using_gp: True
-    ckpt_path: /data/conghao001/FYP/DrugDiscovery/first_stage_models/2023-03-12_20_16_24.275625/epoch=29-train_loss=-8.20.ckpt
+    ckpt_path: ../../antibiotics/models/first_stage_only.ckpt
   
   cond_stage_config:
     params: 
