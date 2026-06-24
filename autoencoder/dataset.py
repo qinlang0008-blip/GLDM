@@ -68,6 +68,8 @@ class MolerData(Data):
         if key in to_increment_by_num_nodes_in_graph:
             return self.x.size(0)
         else:
+            if value.numel() == 0:
+                return 0
             return super().__inc__(key, value, *args, **kwargs)
 
     def __cat_dim__(self, key, value, *args, **kwargs):
