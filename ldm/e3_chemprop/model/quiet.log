@@ -1,0 +1,11 @@
+Fold 0
+Warning: SMILES string in val could not be found in data file, and likely came from a secondary data file. The pickle file of split indices can only indicate indices for a single file and will not be generated.
+Fold 0
+Warning: SMILES string in val could not be found in data file, and likely came from a secondary data file. The pickle file of split indices can only indicate indices for a single file and will not be generated.
+Model 0 best validation mae = 1.335985 on epoch 46
+Model 0 test mae = 1.336219
+Ensemble test mae = 1.336219
+1-fold cross validation
+	Seed 0 ==> test mae = 1.336219
+Overall test mae = 1.336219 +/- 0.000000
+Elapsed time = 0:15:08
