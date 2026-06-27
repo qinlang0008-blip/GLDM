@@ -7,6 +7,28 @@ from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat,
 from torch.optim.lr_scheduler import LambdaLR
 from pytorch_lightning.utilities import rank_zero_only
 import numpy as np
+import math
+
+
+class MICEncoder(torch.nn.Module):
+    def __init__(self, fourier_dim=64, mlp_dim=128, out_dim=64):
+        super().__init__()
+        self.fourier_dim = fourier_dim
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(fourier_dim, mlp_dim),
+            torch.nn.SiLU(),
+            torch.nn.Linear(mlp_dim, out_dim)
+        )
+
+    def forward(self, x):
+        x = x.squeeze(-1).squeeze(-1)  # [B, 1, 1] -> [B]
+        half = self.fourier_dim // 2
+        freqs = torch.arange(half, device=x.device).float()
+        freqs = 2 * math.pi * (1000 ** (freqs / half))
+        x_freq = x.unsqueeze(-1) * freqs  # [B, half]
+        emb = torch.cat([torch.sin(x_freq), torch.cos(x_freq)], dim=-1)  # [B, fourier_dim]
+        emb = self.mlp(emb)  # [B, out_dim]
+        return emb.unsqueeze(1)  # [B, 1, out_dim]
 
 class LatentDiffusion(DDPM):
     def __init__(self,
@@ -54,6 +76,8 @@ class LatentDiffusion(DDPM):
         self.concat_mode = concat_mode
         self.cond_stage_trainable = cond_stage_trainable
         self.cond_stage_key = cond_stage_key
+        if self.cond_stage_key == 'mic_value':
+            self.mic_encoder = MICEncoder(fourier_dim=64, mlp_dim=128, out_dim=64)
         try:
             self.num_downs = len(first_stage_config.params.ddconfig.ch_mult) - 1
         except:
@@ -259,7 +283,8 @@ class LatentDiffusion(DDPM):
             if cond_key == 'gene_expressions':
                 xc = torch.cat((batch[cond_key], batch['dose'].unsqueeze(-1)), dim=-1)
             elif cond_key == 'mic_value':
-                xc = batch['mic_value'].unsqueeze(-1)
+                xc = batch['mic_value'].unsqueeze(-1).unsqueeze(-1)  # (N,) -> (N, 1, 1)
+                xc = self.mic_encoder(xc)  # (N, 1, 64)
             else:
                 xc = None
                 raise NotImplementedError('condition key is not supported')

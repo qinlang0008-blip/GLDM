@@ -61,5 +61,5 @@ model:
       - 1
       - 2
       - 3
-      context_dim: 1
+      context_dim: 64
       num_head_channels: 8
