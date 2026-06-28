@@ -466,8 +466,6 @@ class LatentDiffusion(DDPM):
         logvar_t = self.logvar[t].to(self.device)
         loss = loss_simple / torch.exp(logvar_t) + logvar_t
         # loss = loss_simple / torch.exp(self.logvar) + self.logvar
-        if hasattr(self, "mic_encoder"):
-            params = params + list(self.mic_encoder.parameters())
         if self.learn_logvar:
             loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
             loss_dict.update({'logvar': self.logvar.data.mean()})
