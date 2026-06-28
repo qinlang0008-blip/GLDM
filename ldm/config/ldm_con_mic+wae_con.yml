@@ -11,7 +11,7 @@ model:
     cond_stage_key: mic_value
     image_size: 512
     channels: 1
-    cond_stage_trainable: False
+    cond_stage_trainable: True
     conditioning_key: crossattn
     monitor: val/loss_simple_ema
     scale_factor: 1 #0.18215
@@ -37,7 +37,7 @@ model:
   
   cond_stage_config:
     params: 
-      dim: 1
+      dim: 64
       key: mic_value
 
   unet_config:

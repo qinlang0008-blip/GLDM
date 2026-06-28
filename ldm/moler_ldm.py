@@ -24,7 +24,7 @@ class MICEncoder(torch.nn.Module):
         x = x.squeeze(-1).squeeze(-1)  # [B, 1, 1] -> [B]
         half = self.fourier_dim // 2
         freqs = torch.arange(half, device=x.device).float()
-        freqs = 2 * math.pi * (1000 ** (freqs / half))
+        freqs = 2 * math.pi * torch.exp(freqs / half * math.log(1000))
         x_freq = x.unsqueeze(-1) * freqs  # [B, half]
         emb = torch.cat([torch.sin(x_freq), torch.cos(x_freq)], dim=-1)  # [B, fourier_dim]
         emb = self.mlp(emb)  # [B, out_dim]
@@ -251,7 +251,6 @@ class LatentDiffusion(DDPM):
         return c
     '''
     
-    @torch.no_grad()
     def get_input(self, batch, return_first_stage_outputs=False, force_c_encode=False,
                   cond_key=None, return_original_cond=False, bs=None):
         # TODO: rewrite this function to get the mol input and the gene expr input
@@ -467,6 +466,8 @@ class LatentDiffusion(DDPM):
         logvar_t = self.logvar[t].to(self.device)
         loss = loss_simple / torch.exp(logvar_t) + logvar_t
         # loss = loss_simple / torch.exp(self.logvar) + self.logvar
+        if hasattr(self, "mic_encoder"):
+            params = params + list(self.mic_encoder.parameters())
         if self.learn_logvar:
             loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
             loss_dict.update({'logvar': self.logvar.data.mean()})
@@ -699,6 +700,8 @@ class LatentDiffusion(DDPM):
         if self.cond_stage_trainable:
             print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
             params = params + list(self.cond_stage_model.parameters())
+        if hasattr(self, "mic_encoder"):
+            params = params + list(self.mic_encoder.parameters())
         if self.learn_logvar:
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
