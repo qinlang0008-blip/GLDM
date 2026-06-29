@@ -47,6 +47,7 @@ class LatentDiffusion(DDPM):
                  conditioning_key=None,    # by default, concat mode is used
                  scale_factor=1.0,
                  scale_by_std=False,
+                 cfg_drop_prob=0.0,
                  *args, **kwargs):
         # self.log("drop_prob", dataset._gen_step_drop_probability)    # can't call here since trainer is not initiated yet
         
@@ -58,6 +59,7 @@ class LatentDiffusion(DDPM):
         self.latent_dim = first_stage_params['latent_repr_dim']
         # self.dataset = dataset
         self.batch_size = batch_size
+        self.cfg_drop_prob = cfg_drop_prob
         self.model_architecture = first_stage_config['model_type']
         # self.first_stage_params = first_stage_params
         # self.first_stage_ckpt = first_stage_ckpt
@@ -302,8 +304,16 @@ class LatentDiffusion(DDPM):
             c = xc
 
             c = c.view((self.batch_size * c.size(0), 1, c.size(-1)))
-            # print('c size:', c.size())
-                
+
+            # CFG condition dropout: per-sample, replace entire embedding with zeros
+            if self.training and self.cfg_drop_prob > 0.0:
+                keep_mask = torch.bernoulli(
+                    torch.full((c.shape[0], 1, 1), 1.0 - self.cfg_drop_prob, device=c.device)
+                )
+                c = c * keep_mask
+                n_dropped = int((keep_mask.squeeze(-1).squeeze(-1) == 0).sum().item())
+                print(f"[CFG] step={self.global_step} dropped={n_dropped}/{c.shape[0]} ({n_dropped/c.shape[0]*100:.0f}%)")
+
             if bs is not None:
                 c = c[:bs]
 
@@ -371,18 +381,32 @@ class LatentDiffusion(DDPM):
         )
         return input_molecule_representations, partial_graph_representations, node_representations
     
-    def shared_step(self, batch, batch_id=None, **kwargs):
-        # skip a weird batch
-        # if batch['dose'].size(0) != 1000:
-        #     raise ValueError('channel number is not 1000!')
+    def on_before_optimizer_step(self, optimizer):
+        # Check mic_encoder gradients after backward, before optimizer.step clears them.
+        if hasattr(self, 'mic_encoder'):
+            total_sq = 0.0
+            has_any = False
+            for name, p in self.mic_encoder.named_parameters():
+                if p.grad is not None:
+                    g = p.grad.norm().item()
+                    total_sq += g ** 2
+                    has_any = True
+                    print(f"  [mic_encoder grad] step={self.global_step} {name}: {g:.6f}")
+                else:
+                    print(f"  [mic_encoder grad] step={self.global_step} {name}: NO GRAD")
+            status = f"{total_sq**0.5:.6f}" if has_any else "ALL_ZERO"
+            print(f"[Step {self.global_step}] mic_encoder total grad norm: {status}")
 
+    def shared_step(self, batch, batch_id=None, **kwargs):
         # pass the batch data to decoder via self
         self.batch = batch
 
         # x here is actually latent repr z. it's written as x to be consistent with the DDPM theory.
         x, c = self.get_input(batch)
-        loss = self(x, c)
-        return loss
+        loss, loss_dict = self(x, c)
+        if torch.isnan(loss):
+            print(f"[NaN] loss is NaN at step={self.global_step}")
+        return loss, loss_dict
     
     def forward(self, x, c, *args, **kwargs):
         t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()

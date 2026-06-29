@@ -3,7 +3,6 @@ sys.path.append('../autoencoder/')
 
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 import argparse
 import torch
@@ -16,6 +15,8 @@ from rdkit import Chem
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--gpu', type=str, default='0',
+                        help='CUDA device(s) to use, e.g. 0 or 0,1')
     parser.add_argument('--ckpt_path', type=str, required=True)
     parser.add_argument('--config', type=str, default='config/ldm_con_mic+wae_con.yml')
     parser.add_argument('--raw_trace_dir', type=str, required=True)
@@ -25,11 +26,14 @@ def parse_args():
     parser.add_argument('--n_samples', type=int, default=100)
     parser.add_argument('--ddim_steps', type=int, default=200)
     parser.add_argument('--ddim_eta', type=float, default=1.0)
+    parser.add_argument('--guidance_scale', type=float, default=1.0,
+                        help='CFG guidance scale. 1.0 = no guidance. Requires model trained with cfg_drop_prob > 0.')
     parser.add_argument('--output', type=str, default='generated_smiles.txt')
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
@@ -72,17 +76,26 @@ def main():
     ldm_model.eval()
     print('Model loaded.')
 
-    # condition tensor: shape (n_samples, 1, 1)
+    # condition tensor: encode scalar MIC value through mic_encoder → [B, 1, 64]
     mic_tensor = torch.full((args.n_samples, 1, 1), args.mic_value, device=device)
+    conditioning = ldm_model.mic_encoder(mic_tensor)  # [B, 1, 1] → [B, 1, 64]
     print(f'Sampling {args.n_samples} molecules at mic_value={args.mic_value}...')
+
+    # CFG: null condition is the all-zeros embedding (matches training dropout)
+    unconditional_conditioning = None
+    if args.guidance_scale != 1.0:
+        unconditional_conditioning = torch.zeros_like(conditioning)  # [B, 1, 64]
+        print(f'Using CFG with guidance_scale={args.guidance_scale}')
 
     sampler = MolSampler(ldm_model)
     samples, _ = sampler.sample(
         S=args.ddim_steps,
         batch_size=args.n_samples,
-        conditioning=mic_tensor,
+        conditioning=conditioning,
         shape=(1, 512),
         ddim_eta=args.ddim_eta,
+        unconditional_guidance_scale=args.guidance_scale,
+        unconditional_conditioning=unconditional_conditioning,
     )
 
     z = samples.view((args.n_samples, 512))

@@ -681,10 +681,13 @@ class UNetModel(nn.Module):
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
                 self._feature_size += ch
 
+        _out_conv = conv_nd(dims, model_channels, out_channels, 3, padding=1)
+        nn.init.xavier_uniform_(_out_conv.weight)
+        nn.init.zeros_(_out_conv.bias)
         self.out = nn.Sequential(
             normalization(ch),
             nn.SiLU(),
-            zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
+            _out_conv,
         )
         if self.predict_codebook_ids:
             self.id_predictor = nn.Sequential(
